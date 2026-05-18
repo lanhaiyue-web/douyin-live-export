@@ -2,13 +2,35 @@
 
 按分钟对齐「流量曲线 × 主播话术」，红绿染色，一键导出 Excel 到桌面。
 
-> **TL;DR — 一条命令搞定**
-> ```powershell
-> cd D:\AIProjects\my-first-peoject\抖音直播分析
-> python douyin_tool.py go --index 2     # 自动: 启动浏览器 → 等扫码 → 刷场次 → 导第 2 场到桌面
-> ```
-> 第一次跑会弹默认浏览器，**你扫码登录后工具自动检测、自动接力**，不用手动告知。
-> LLM 接手请先看 [AGENTS.md](AGENTS.md)。
+## 🚀 一键安装（Claude Code Plugin Marketplace）
+
+在你的 Claude Code 里贴这三行：
+
+```bash
+claude plugin marketplace add lanhaiyue-web/douyin-live-export
+claude plugin install douyin-live-export@douyin-live-export
+/reload-plugins
+```
+
+装好后输入 `/douyin-live-export` 触发，工具会自动：
+1. 启动你的默认浏览器
+2. 让你扫码登录抖音直播服务平台（仅首次）
+3. 列出你近 30 场直播
+4. 你告诉它要导哪一场 → Excel 自动出在桌面
+
+---
+
+**如果不用 Claude Code，纯命令行也行**：
+
+```powershell
+git clone https://github.com/lanhaiyue-web/douyin-live-export.git
+cd douyin-live-export
+pip install -r requirements.txt
+python douyin_tool.py go                  # 启动浏览器 → 扫码 → 列场次
+python douyin_tool.py export --index N    # 导第 N 场
+```
+
+LLM 接手请先看 [AGENTS.md](AGENTS.md)。
 
 ## 它做什么
 
