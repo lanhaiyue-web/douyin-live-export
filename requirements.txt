@@ -1,0 +1,11 @@
+# 核心导出管线（CLI 必装）
+playwright>=1.40
+pandas>=2.0
+openpyxl>=3.1
+
+# Streamlit 看板（可选，运行 app.py 时需要）
+streamlit>=1.30
+
+# AI 复盘总结（可选，启用 Claude / OpenAI 总结时需要）
+anthropic>=0.40
+openai>=1.30

@@ -1,0 +1,11 @@
+data/
+__pycache__/
+*.pyc
+.venv/
+.env
+.streamlit/secrets.toml
+
+# 运行时临时
+*.pid
+*.log
+*_flow_transcript_rows.json

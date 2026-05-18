@@ -1,0 +1,22 @@
+{
+  "name": "douyin-live-export",
+  "owner": {
+    "name": "lanhaiyue-web"
+  },
+  "metadata": {
+    "description": "抖音直播复盘提取工具：自动按分钟对齐流量曲线 × 主播话术，红绿染色，一键导出 Excel 到桌面",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "douyin-live-export",
+      "description": "从抖音直播服务平台导出某场直播的「分钟流量 × 话术」染色 Excel。自动启动浏览器让用户扫码登录，列出近 30 场直播，按用户指定的场次导出。",
+      "source": "./",
+      "strict": false,
+      "version": "1.0.0",
+      "category": "data-extraction",
+      "keywords": ["douyin", "live-streaming", "analytics", "excel", "transcript", "chinese"],
+      "skills": ["./skills/douyin-live-export"]
+    }
+  ]
+}
