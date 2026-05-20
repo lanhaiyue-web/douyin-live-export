@@ -1,6 +1,6 @@
 # 抖音直播分析工具运行手册
 
-接手用：所有脚本只走本项目的托管浏览器（项目独立 `data/user_data/`），不动用户日常浏览器。
+接手用：登录态全部走 Playwright 持久化 profile，每个平台一个目录，不动用户日常浏览器。
 
 ## 固定流程
 
@@ -9,17 +9,20 @@
 cd D:\AIProjects\my-first-peoject\抖音直播分析
 python douyin_tool.py go --index 2
 ```
-`go` 自动按 4 步走：检查浏览器 → 检测登录（轮询 cookies，未登录就等扫码）→ refresh 场次 → export。
+`go` 自动按 3 步走：检测登录态 → 没登录就弹窗等扫码 → refresh 场次 → export。
 
 **分步版**（调试 / 手动控制时用）：
 ```powershell
-python douyin_tool.py browser start                # 启动托管浏览器
-python douyin_tool.py sessions refresh --limit 30  # 刷新近 30 场
-python douyin_tool.py sessions list --cache-only   # 列场次
-python douyin_tool.py export --index 2             # 导出
+python auth_browser.py login douyin-creator          # 首次：扫码登录，写入 .auth/douyin-creator/
+python auth_browser.py status douyin-creator         # 检查登录态是否还有效
+python douyin_tool.py sessions refresh --limit 30    # 刷新近 30 场
+python douyin_tool.py sessions list --cache-only     # 列场次
+python douyin_tool.py export --index 2               # 导出
 ```
 
-首次扫码登录后，登录态永久保存到 `data/user_data/`，下次不用再扫。
+`auth_browser.py` 也提供等价子命令 `python douyin_tool.py auth login|status|open|list`。
+
+首次扫码登录后，登录态永久保存到 `.auth/<platform>/`，下次不用再扫。Cookie 过期再跑一次 `auth login` 即可。
 
 ## 输出格式
 
@@ -36,28 +39,29 @@ python douyin_tool.py export --index 2             # 导出
 
 **不要改回多 sheet 表格。** 用户已经明确要求只要这一张。
 
-## 浏览器选择优先级
+## 登录浏览器（专用登录浏览器）
 
-`chrome_daemon.find_browser()` 顺序：
-
-1. 环境变量 `DOUYIN_BROWSER_PATH`（手动指定）
-2. Windows 注册表读 HKCU UserChoice（系统当前默认浏览器）
-3. `BROWSER_CANDIDATES` 列表：Edge → Chrome → Brave → Chromium → 360 → QQ
-
-把 Edge 放第一是产品决策：目标用户（普通主播）默认浏览器就是 Windows 自带的 Edge，详见 [memory.md](memory.md) 「浏览器优先级」。
+- 实现：Playwright 自带 Chromium + `launch_persistent_context`
+- profile 根目录：`.auth/`
+- 每个平台一个固定 user-data-dir：
+  - `.auth/douyin-creator/` 抖音直播服务平台
+  - `.auth/kuaishou/`       快手直播伙伴（已留位，未启用抓取）
+- 默认 `headless=False`：登录窗口必须可见，用户能扫码
+- 没有 daemon 进程、没有 CDP 端口；每次需要时 `launch_persistent` 启动一次，用完关掉
+- 平台扩展：编辑 [auth_browser.py](auth_browser.py) 的 `PLATFORMS` 字典加一项即可
 
 ## 关键实现
 
-- `chrome_daemon.py`：托管浏览器；环境变量 `DOUYIN_BROWSER_PATH`、`DOUYIN_CDP_PORT` 可覆盖
-- `douyin_sessions.py`：读当前账号近 30 场，缓存到 `data/sessions_cache.json`
-- `export_review_table.py`：单场抓取流量 + 话术 + 导出
-- `douyin_tool.py`：统一 CLI 入口
+- [auth_browser.py](auth_browser.py)：专用登录浏览器，多平台 persistent context
+- [douyin_sessions.py](douyin_sessions.py)：读当前账号近 30 场，缓存到 `data/sessions_cache.json`
+- [export_review_table.py](export_review_table.py)：单场抓取流量 + 话术 + 导出
+- [douyin_tool.py](douyin_tool.py)：统一 CLI 入口
 
 ## 反爬关键 fix（重要）
 
 抖音对 Playwright CDP 协议的 `page.reload()` 有指纹识别，复盘页会返回空壳（只剩顶部导航 + 底部备案，body 163 字符）。
 
-**修复**：[export_review_table.py:454](export_review_table.py#L454) 用 `page.evaluate("() => { location.reload(); }")` 在页面主环境触发 reload。改完之后 body 立刻恢复完整（2224 字符），复盘内容正常渲染。
+**修复**：[export_review_table.py](export_review_table.py) 用 `page.evaluate("() => { location.reload(); }")` 在页面主环境触发 reload。改完之后 body 立刻恢复完整（2224 字符），复盘内容正常渲染。
 
 **不要回退**这个 fix —— 改回 `page.reload()` 就拿不到话术。
 

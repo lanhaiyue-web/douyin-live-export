@@ -59,24 +59,25 @@ analyzer / app 层不知道数据来自哪个源。
 手机 App 后台 = 网页版同源后端，**不单独做手机抓取**。
 
 ## 浏览器反爬关键
-- 抖音 anchor / creator / passport 会用 `navigator.webdriver` 等指纹识别 Playwright Chromium → 触发"系统繁忙"
-- 唯一稳定方案：`channel="chrome"` 调用本机真实 Chrome（不用 Playwright bundled chromium）+ `add_init_script` 抹掉指纹 + `launch_persistent_context` 持久化用户目录
-- 登录态用 user_data_dir 持久化，不用 storage_state.json
+- 抖音 anchor / creator / passport 会用 `navigator.webdriver` 等指纹识别 Playwright → 触发"系统繁忙"
+- 缓解组合：`--disable-blink-features=AutomationControlled` + `ignore_default_args=["--enable-automation"]` + `launch_persistent_context` 持久化用户目录 + 用 `page.evaluate("location.reload()")` 而不是 `page.reload()`
+- 登录态用 user_data_dir 持久化（profile 落盘 cookie），不用 storage_state.json
+
+## 登录浏览器架构（2026-05-20 起）
+- 统一走 `auth_browser.launch_persistent`（Playwright 自带 Chromium + persistent context，`headless=False`）
+- 每个平台一个固定 user-data-dir：`.auth/<platform>/`（`.auth/douyin-creator/` / `.auth/kuaishou/` ……）
+- **不要再回到** chrome_daemon / CDP 端口 / 系统 Edge 那条老路径——已经废弃
+- 想加平台只在 `auth_browser.PLATFORMS` 字典加一项，user-data-dir 自动隔离
 
 ## 模块边界
-- `login.py`：弹浏览器登录，持久化用户目录
-- `crawler.py`：拦截 XHR，分两个模式 —— 侦察模式（记日志）/ 抓取模式（按已知接口取数据）
-- `analyzer.py`：纯函数，输入约定结构，输出染色行 + Claude 总结
-- `app.py`：只做展示和编排
-- → 每个模块独立测试，crawler 改不影响 analyzer
+- `auth_browser.py`：弹专用登录浏览器，每个平台独立 profile
+- `douyin_sessions.py`：刷近 30 场缓存（`data/sessions_cache.json`）
+- `export_review_table.py`：单场抓流量 + 话术 + 染色 Excel
+- `douyin_tool.py`：CLI 统一入口（auth / sessions / export / go）
+- `sources/anchor.py`：抖音接口适配器（async 接口，给 Streamlit 旁路用）
+- → 每个模块独立测试，登录态全部走 `auth_browser`，不要在业务模块里直接 `launch_persistent_context`
 
 ## 项目目标定位（避免做歪）
 - 不是飞瓜蝉妈妈那种"全量数据看板"，是"AI 句子级复盘教练"
 - 卖点不是"数据多"，是"看完就知道明天怎么改"
 - 永远把"对齐 + 染色 + 总结"这三件事做到极致，其他功能先不加
-
-## 浏览器优先级（产品级硬约束）
-- **Edge 必须跑通**，是第一优先级。原因：Edge 是 Windows 自带浏览器，目标用户（普通主播）不会装 Chrome
-- 不要默认走 Chrome / 不要为了好测试就启 chrome_daemon；用户桌面那只 Edge 是真实交付场景
-- 任何接入路径（CDP / 扩展 / 调试口）都先在 Edge 上验通，再考虑兼容其他 Chromium
-- 用户已经明确否决过用托管 Chrome 替代他自己的 Edge 这条路径

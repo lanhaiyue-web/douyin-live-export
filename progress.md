@@ -1,6 +1,10 @@
 # 进度
 
 ## 当前阶段
+**登录态架构已切到 Playwright persistent context（2026-05-20）**：删除 chrome_daemon.py / CDP 端口路径，新增 [auth_browser.py](auth_browser.py)，每个平台一个固定 user-data-dir（`.auth/douyin-creator/`、`.auth/kuaishou/`），浏览器内核统一用 Playwright 自带 Chromium，登录窗口默认 `headless=False`。`douyin_sessions.py` / `export_review_table.py` / `sources/anchor.py` / `douyin_tool.py` 全部改用 `auth_browser.launch_persistent`。
+
+`douyin_tool.py` CLI：`browser` 子命令换成 `auth`（login / status / open / list）。`go` 流程从 4 步缩到 3 步。
+
 **红绿流量 × 话术单表导出已跑通**。当前最可靠入口是 `export_review_table.py`，输出 Claude Code 之前做过的那种单 sheet Excel。
 
 当前已验证场次：

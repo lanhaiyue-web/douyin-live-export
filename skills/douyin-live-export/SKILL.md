@@ -1,6 +1,6 @@
 ---
 name: douyin-live-export
-description: 从抖音直播服务平台导出某场直播的「分钟流量 × 主播话术」染色 Excel 到桌面。触发词：「抖音直播复盘」/「导出抖音直播 Excel」/「抖音直播话术」/「直播流量染色」/「douyin live export」/「我要分析我的抖音直播」。第一次跑会启动用户的默认浏览器让他扫码登录抖音直播服务平台。
+description: 从抖音直播服务平台导出某场直播的「分钟流量 × 主播话术」染色 Excel 到桌面。触发词：「抖音直播复盘」/「导出抖音直播 Excel」/「抖音直播话术」/「直播流量染色」/「douyin live export」/「我要分析我的抖音直播」。第一次跑会弹一个专用登录浏览器（Playwright 自带 Chromium）让用户扫码登录抖音直播服务平台。
 argument-hint: [—— 可选: --index N / --room-id X / --title-contains TEXT / --start-contains TEXT]
 allowed-tools: Bash(*), Read, Write, Edit, AskUserQuestion, Glob, Grep
 ---
@@ -25,15 +25,11 @@ allowed-tools: Bash(*), Read, Write, Edit, AskUserQuestion, Glob, Grep
 
 ### Phase 0 — 定位项目根
 
-Plugin 安装后，项目代码在这个 SKILL.md 的**爷爷目录**（含 `douyin_tool.py` 的目录）。用 Glob 或 Bash 自动定位：
+Plugin 安装后，项目代码在这个 SKILL.md 的**爷爷目录**（含 `douyin_tool.py` 的目录）。用 Glob 找：
 
 ```bash
-# 假设 SKILL.md 在 ~/.claude/plugins/douyin-live-export/<...>/skills/douyin-live-export/SKILL.md
-# 那么项目根 = SKILL.md 的爷爷目录的爷爷目录
-# 用 Glob 找一下 douyin_tool.py 在哪
+# 用 Glob 模式 **/douyin_tool.py 找项目根，然后所有命令都在那里跑
 ```
-
-用 Glob 模式 `**/douyin_tool.py` 找到项目根，然后所有命令都在那里跑。
 
 ### Phase 1 — 检查依赖
 
@@ -47,22 +43,27 @@ python -c "import playwright, pandas, openpyxl" 2>&1
 pip install -r requirements.txt
 ```
 
-**不需要** `playwright install`——工具复用本机 Edge / Chrome，不用 Playwright bundled chromium。
+**必须**跑一次 `playwright install chromium`——专用登录浏览器用的是 Playwright 自带 Chromium 内核，跟系统 Edge/Chrome 物理隔离。
+
+```bash
+playwright install chromium
+```
 
 ### Phase 2 — 一键跑通
 
-跑 `go` 子命令（**它自己会做**所有事：启浏览器、等扫码登录、刷场次、列出来停下）：
+跑 `go` 子命令（**它自己会做**所有事：检测登录、必要时弹窗扫码、刷场次、列出来停下）：
 
 ```bash
 cd <项目根>
 python douyin_tool.py go
 ```
 
-观察输出，会按 `[N/4]` 打进度：
-- `[1/4]` 检查托管浏览器（没起就启系统默认浏览器，Windows 默认是 Edge）
-- `[2/4]` 检测登录态（cookies 没种上就轮询等用户扫码，最多 10 分钟）
-- `[3/4]` 刷新近 30 场缓存 → **列出场次表**
-- `[4/4]` 没指定场次 → 停下来
+观察输出，会按 `[N/3]` 打进度：
+- `[1/3]` 检测登录态（cookies 没种上就弹专用登录浏览器，最多 10 分钟等扫码）
+- `[2/3]` 刷新近 30 场缓存 → **列出场次表**
+- `[3/3]` 没指定场次 → 停下来
+
+首次登录后，登录态写入项目根的 `.auth/douyin-creator/`，下次自动复用（cookie 不过期就一直免登录）。
 
 ### Phase 3 — 让用户选场次
 
@@ -98,19 +99,20 @@ TEXT_ROWS=<有话术的行数>
 ## 不要做的事（之前踩过的坑）
 
 1. **不要把单 sheet Excel 改回多 sheet**。
-2. **不要把 `page.evaluate("() => { location.reload(); }")` 改回 `page.reload()`**。抖音对 Playwright CDP `page.reload()` 有反爬识别，复盘页会变空壳。文件位置：项目根的 `export_review_table.py` 的 `capture_review_page()`。
+2. **不要把 `page.evaluate("() => { location.reload(); }")` 改回 `page.reload()`**。抖音对 Playwright `page.reload()` 有反爬识别，复盘页会变空壳。文件位置：项目根的 `export_review_table.py` 的 `capture_review_page()`。
 3. **不要默认导第 1 场或上次导过的那一场**。用户没说就停在 Phase 3 等。
-4. **不要 kill 用户日常浏览器进程**（msedge.exe / chrome.exe）。项目用独立的 `data/user_data/`（在项目根），跟用户日常浏览器物理隔离。
+4. **不要回退到系统 Edge / Chrome + CDP 端口的老登录路径**。统一走 `auth_browser.launch_persistent`，profile 在项目根的 `.auth/<platform>/`，跟用户日常浏览器物理隔离。
 5. **不要主动 commit 代码**，除非用户明确说。
 
 ## 故障排查
 
 | 症状 | 原因 | 解决 |
 |---|---|---|
-| `CDP 端口 9222 没有托管浏览器` | daemon 没起 | `python douyin_tool.py browser start` |
+| `Executable doesn't exist` (Playwright) | 没装 Chromium 内核 | `playwright install chromium` |
+| `持久 profile 未登录抖音直播服务平台` | `.auth/douyin-creator/` 里 cookie 没了 | `python auth_browser.py login douyin-creator` 重新扫码 |
 | 浏览器弹出但抖音页空白 | 反爬没绕过 | 确认代码没改回 `page.reload()` |
 | `没有捕获到 minute_trend` | navigate 后没等够 | 重跑一次 |
-| 卡在 `[2/4] 等待扫码` 超过 10 分钟 | 用户没真的扫码 | 提示用户：在弹出的浏览器里扫码登录抖音直播服务平台 |
+| 卡在 `[1/3] 等待扫码` 超过 10 分钟 | 用户没真的扫码 | 提示用户：在弹出的窗口里扫码登录抖音直播服务平台 |
 | 话术列空 | 复盘页 DOM 没渲染完 | 多等几秒重跑 export |
 
 ## 完整接手文档（深入修改时看）
@@ -121,4 +123,4 @@ TEXT_ROWS=<有话术的行数>
 3. `RUNBOOK.md` — 故障排查
 4. `progress.md` / `bugs.md` — 历史踩坑 + 修复
 
-主要代码：`douyin_tool.py` → `chrome_daemon.py` / `export_review_table.py`
+主要代码：`douyin_tool.py` → `auth_browser.py` / `export_review_table.py`

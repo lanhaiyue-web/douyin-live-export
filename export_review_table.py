@@ -22,9 +22,8 @@ from urllib.parse import parse_qs, urlparse
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from playwright.sync_api import sync_playwright
 
-from chrome_daemon import CDP_PORT, is_cdp_alive
+from auth_browser import DEFAULT_PLATFORM, has_login_cookies, launch_persistent, resolve_platform
 from douyin_sessions import (
     SESSION_CACHE_PATH,
     format_session_list,
@@ -414,15 +413,16 @@ def capture_review_page(
 ) -> tuple[dict[str, str], list[dict[str, Any]]]:
     if session and not room_id:
         room_id = session.session_id
-    if not is_cdp_alive():
-        raise RuntimeError(f"CDP 端口 {CDP_PORT} 没有托管浏览器。先运行：python chrome_daemon.py start")
 
     traffic_by_minute: dict[str, dict[str, Any]] = {}
     transcript_bodies: list[tuple[str, dict[str, Any]]] = []
 
-    with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{CDP_PORT}")
-        context = browser.contexts[0] if browser.contexts else browser.new_context()
+    spec = resolve_platform(DEFAULT_PLATFORM)
+    with launch_persistent(spec) as context:
+        if not has_login_cookies(context, spec):
+            raise RuntimeError(
+                f"持久 profile 未登录{spec.name_zh}。先跑：python auth_browser.py login {spec.key}"
+            )
         page = _choose_page(context, room_id, current_page_only=not navigate)
 
         url_room_id = parse_room_id(page.url)

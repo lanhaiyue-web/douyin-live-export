@@ -12,11 +12,14 @@
 - [x] 文档完善：README / RUNBOOK / AGENTS / CLAUDE / progress / memory 全部对齐当前实现
 - [x] requirements.txt + .gitignore 完整
 - [x] 端到端验证：场次 7640044495510866714，35 行流量 + 33 行话术 + 染色
+- [x] 2026-05-20：登录架构迁移到 Playwright persistent context，新增 auth_browser.py 多平台脚手架；删除 chrome_daemon.py；多平台 user-data-dir = `.auth/<platform>/`
 
 ## 长期方向（按需做）
 
+- [ ] 端到端跑通新登录流程（用户在自己机器上 `python auth_browser.py login douyin-creator` 扫码后导一场验证）
 - [ ] 把 `douyin_tool.py export` 接进 Streamlit UI 的导出按钮（让非命令行用户也能用）
-- [ ] 多账号支持：环境变量切换 `data/user_data_<name>/`
+- [ ] 多账号支持：`launch_persistent("<account-name>")` 加 `.auth/<account-name>/`
+- [ ] 启用 kuaishou 数据源（PlatformSpec 已占位，缺抓取适配器）
 - [ ] 接入巨量百应（buyin.jinritemai.com）数据源
 - [ ] 接入抖店罗盘（compass.jinritemai.com）数据源
 - [ ] 接入直播伴侣 PC 端（读本地缓存）

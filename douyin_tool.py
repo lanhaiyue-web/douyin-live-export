@@ -5,14 +5,13 @@ import argparse
 import json
 from pathlib import Path
 
-from chrome_daemon import (
-    CDP_PORT,
-    is_cdp_alive,
+from auth_browser import (
+    DEFAULT_PLATFORM,
     is_logged_in,
-    start_daemon,
-    status as browser_status,
-    stop_daemon,
-    wait_for_login,
+    list_platforms,
+    login_window,
+    open_window,
+    status as auth_status,
 )
 from douyin_sessions import (
     SESSION_CACHE_PATH,
@@ -29,51 +28,45 @@ from export_review_table import (
 )
 
 
-def print_sessions(refresh: bool, limit: int, auto_start: bool, cache_only: bool = False) -> None:
+def print_sessions(refresh: bool, limit: int, auto_start: bool = False, cache_only: bool = False) -> None:
+    del auto_start  # 兼容旧签名，新方案不再使用
     if refresh and not cache_only:
-        refresh_sessions(limit=limit, auto_start=auto_start)
+        refresh_sessions(limit=limit)
     items = load_session_cache()
     print(f"CACHE={SESSION_CACHE_PATH}")
     print(format_session_list(items))
 
 
 def cmd_go(args) -> None:
-    """一条命令完成全部：启动浏览器 → 自动等扫码 → refresh → export。
+    """一条命令完成全部：检查登录 → 必要时弹窗扫码 → refresh → export。
 
-    不需要用户手动告知"我登录好了"——轮询 cookies 自动检测。
+    每个步骤都用持久 profile 启动一次 Chromium；窗口短暂可见，关掉自动继续。
     """
-    print("[1/4] 检查托管浏览器...")
-    if not is_cdp_alive():
-        print("    托管浏览器没在跑，启动中...")
-        start_daemon(minimized=False)
-    else:
-        print("    ✓ 已在跑")
-
-    print(f"[2/4] 检测登录态（最长等 {args.wait_login_sec}s）...")
-    if is_logged_in():
+    print(f"[1/3] 检测 {DEFAULT_PLATFORM} 登录态...")
+    if is_logged_in(DEFAULT_PLATFORM):
         print("    ✓ 已登录")
     else:
-        print("    ⏳ 请在弹出的浏览器里扫码登录抖音直播服务平台")
-        if not wait_for_login(timeout_sec=args.wait_login_sec, poll_sec=3.0):
+        print(f"    ⏳ 当前 profile 没登录，弹出窗口扫码（最长等 {args.wait_login_sec}s）")
+        ok = login_window(DEFAULT_PLATFORM, timeout_sec=args.wait_login_sec)
+        if not ok:
             raise SystemExit(
-                f"等了 {args.wait_login_sec}s 还没检测到登录。退出。\n"
+                f"等了 {args.wait_login_sec}s 没检测到登录。退出。\n"
                 "重跑：python douyin_tool.py go --index N"
             )
-        print("    ✓ 登录成功")
 
-    print("[3/4] 刷新近 30 场直播缓存...")
-    refresh_sessions(limit=args.limit, auto_start=False)
+    print("[2/3] 刷新近 30 场直播缓存...")
+    refresh_sessions(limit=args.limit)
     items = load_session_cache()
     print(format_session_list(items))
 
     has_selector = any([args.index, args.room_id, args.title_contains, args.start_contains])
     if not has_selector:
-        print("\n[4/4] 没指定要导哪一场。下一步：")
+        print("\n[3/3] 没指定要导哪一场。下一步：")
         print("  python douyin_tool.py export --index N")
         print("  (N 是上面列表里的序号)")
         return
 
-    print("[4/4] 导出指定场次...")
+    print("[3/3] 导出指定场次...")
     cmd_export(args)
 
 
@@ -86,7 +79,7 @@ def cmd_export(args) -> None:
         session = None
         if args.index or args.title_contains or args.start_contains:
             if args.refresh_sessions or not SESSION_CACHE_PATH.exists():
-                refresh_sessions(limit=args.limit, auto_start=args.auto_start)
+                refresh_sessions(limit=args.limit)
             session = select_cached_session(
                 index=args.index,
                 title_contains=args.title_contains,
@@ -127,27 +120,29 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="抖音直播数据分析工具")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    browser = sub.add_parser("browser", help="托管浏览器")
-    browser_sub = browser.add_subparsers(dest="browser_cmd", required=True)
-    browser_start = browser_sub.add_parser("start", help="启动托管浏览器")
-    browser_start.add_argument("--minimized", action="store_true")
-    browser_sub.add_parser("status", help="查看状态")
-    browser_sub.add_parser("stop", help="停止托管浏览器")
+    auth = sub.add_parser("auth", help="专用登录浏览器（持久 Chromium profile）")
+    auth_sub = auth.add_subparsers(dest="auth_cmd", required=True)
+    auth_login = auth_sub.add_parser("login", help="打开窗口等待扫码")
+    auth_login.add_argument("platform", nargs="?", default=DEFAULT_PLATFORM)
+    auth_login.add_argument("--timeout", type=int, default=600)
+    auth_status_cmd = auth_sub.add_parser("status", help="检查登录态")
+    auth_status_cmd.add_argument("platform", nargs="?", default=DEFAULT_PLATFORM)
+    auth_open = auth_sub.add_parser("open", help="只开窗口，便于保活")
+    auth_open.add_argument("platform", nargs="?", default=DEFAULT_PLATFORM)
+    auth_sub.add_parser("list", help="列出已配置平台")
 
     sessions = sub.add_parser("sessions", help="近 30 场直播缓存")
     sessions_sub = sessions.add_subparsers(dest="sessions_cmd", required=True)
     sessions_refresh = sessions_sub.add_parser("refresh", help="刷新当前账号近 30 场")
     sessions_refresh.add_argument("--limit", type=int, default=30)
-    sessions_refresh.add_argument("--auto-start", action="store_true")
     sessions_list = sessions_sub.add_parser("list", help="显示场次列表")
     sessions_list.add_argument("--limit", type=int, default=30)
     sessions_list.add_argument("--refresh", action="store_true")
     sessions_list.add_argument("--cache-only", action="store_true")
-    sessions_list.add_argument("--auto-start", action="store_true")
 
     go = sub.add_parser(
         "go",
-        help="一键: 启动托管浏览器 + 自动等扫码登录 + 刷新场次 + 导出指定场次",
+        help="一键: 检查登录 + 必要时扫码 + 刷新场次 + 导出指定场次",
     )
     go.add_argument("--index", type=int, help="按场次列表序号导出（缺省则跑到列表停下来）")
     go.add_argument("--room-id")
@@ -159,7 +154,6 @@ def main() -> None:
     # cmd_export 期望的属性，避免 AttributeError
     go.add_argument("--rows-json", type=Path, help=argparse.SUPPRESS)
     go.add_argument("--refresh-sessions", action="store_true", help=argparse.SUPPRESS)
-    go.add_argument("--auto-start", action="store_true", help=argparse.SUPPRESS)
     go.add_argument("--no-reload", action="store_true", help=argparse.SUPPRESS)
 
     export = sub.add_parser("export", help="导出单场流量话术复盘 Excel")
@@ -170,30 +164,32 @@ def main() -> None:
     export.add_argument("--rows-json", type=Path, help="离线 rows JSON")
     export.add_argument("--refresh-sessions", action="store_true")
     export.add_argument("--limit", type=int, default=30)
-    export.add_argument("--auto-start", action="store_true")
     export.add_argument("--no-reload", action="store_true")
     export.add_argument("--out", type=Path)
 
     args = parser.parse_args()
 
-    if args.cmd == "browser":
-        if args.browser_cmd == "start":
-            start_daemon(minimized=args.minimized)
-        elif args.browser_cmd == "status":
-            browser_status()
-        elif args.browser_cmd == "stop":
-            stop_daemon()
+    if args.cmd == "auth":
+        if args.auth_cmd == "login":
+            ok = login_window(args.platform, timeout_sec=args.timeout)
+            raise SystemExit(0 if ok else 2)
+        elif args.auth_cmd == "status":
+            auth_status(args.platform)
+        elif args.auth_cmd == "open":
+            open_window(args.platform)
+        elif args.auth_cmd == "list":
+            list_platforms()
         return
 
     if args.cmd == "sessions":
         if args.sessions_cmd == "refresh":
-            refresh_sessions(limit=args.limit, auto_start=args.auto_start)
-            print_sessions(refresh=False, limit=args.limit, auto_start=args.auto_start)
+            refresh_sessions(limit=args.limit)
+            print_sessions(refresh=False, limit=args.limit, auto_start=False)
         elif args.sessions_cmd == "list":
             print_sessions(
                 refresh=args.refresh,
                 limit=args.limit,
-                auto_start=args.auto_start,
+                auto_start=False,
                 cache_only=args.cache_only,
             )
         return

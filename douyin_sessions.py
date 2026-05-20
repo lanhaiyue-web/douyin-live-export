@@ -12,9 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import sync_playwright
-
-from chrome_daemon import ANCHOR_HOME, CDP_PORT, is_cdp_alive, start_daemon
+from auth_browser import DEFAULT_PLATFORM, has_login_cookies, launch_persistent, resolve_platform
 from sources.anchor import EP_HISTORY_LIST, REVIEW_URL, _parse_session, _unwrap
 from sources.base import LiveSession
 
@@ -67,7 +65,7 @@ def session_from_dict(data: dict[str, Any]) -> LiveSession:
 
 
 def _choose_page(context, room_id: str | None = None):
-    pages = list(context.pages)
+    pages = [pg for pg in context.pages if not pg.is_closed()]
     if room_id:
         for page in pages:
             if "anchor/review" in page.url and room_id in page.url:
@@ -92,19 +90,23 @@ def _dedupe_sessions(sessions: list[LiveSession], limit: int) -> list[LiveSessio
     return out[:limit]
 
 
-def refresh_sessions(limit: int = 30, wait_ms: int = 12_000, auto_start: bool = False) -> list[LiveSession]:
-    """Refresh latest sessions for the account logged into the managed browser."""
-    if not is_cdp_alive():
-        if auto_start:
-            start_daemon(url=ANCHOR_HOME)
-        if not is_cdp_alive():
-            raise RuntimeError("托管浏览器未运行。先执行：python chrome_daemon.py start")
+def refresh_sessions(
+    limit: int = 30,
+    wait_ms: int = 12_000,
+    platform: str = DEFAULT_PLATFORM,
+    auto_start: bool = False,  # 兼容旧 CLI 参数；新方案不再需要
+) -> list[LiveSession]:
+    """Refresh latest sessions for the account logged into the persistent profile."""
+    del auto_start  # 保留参数签名兼容，不再使用
 
+    spec = resolve_platform(platform)
     captured: list[LiveSession] = []
 
-    with sync_playwright() as p:
-        browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{CDP_PORT}")
-        context = browser.contexts[0] if browser.contexts else browser.new_context()
+    with launch_persistent(spec) as context:
+        if not has_login_cookies(context, spec):
+            raise RuntimeError(
+                f"持久 profile 未登录{spec.name_zh}。先跑：python auth_browser.py login {spec.key}"
+            )
         page = _choose_page(context)
 
         def on_response(resp) -> None:
@@ -127,7 +129,7 @@ def refresh_sessions(limit: int = 30, wait_ms: int = 12_000, auto_start: bool = 
         page.goto(REVIEW_URL, wait_until="domcontentloaded", timeout=90_000)
         page.wait_for_timeout(wait_ms)
         if not captured:
-            page.reload(wait_until="domcontentloaded", timeout=90_000)
+            page.evaluate("() => { location.reload(); }")
             page.wait_for_timeout(min(wait_ms, 8_000))
 
     sessions = _dedupe_sessions(captured, limit)
@@ -140,7 +142,7 @@ def save_session_cache(sessions: list[LiveSession], limit: int = 30) -> Path:
     payload = {
         "generated_at": _dt_text(datetime.now()),
         "limit": limit,
-        "cdp_port": CDP_PORT,
+        "platform": DEFAULT_PLATFORM,
         "sessions": [session_to_dict(session, i) for i, session in enumerate(sessions, start=1)],
     }
     SESSION_CACHE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

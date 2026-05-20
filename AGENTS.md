@@ -8,16 +8,16 @@
 
 ```powershell
 cd D:\AIProjects\my-first-peoject\抖音直播分析
-python douyin_tool.py go --index 2     # 一条命令：启动浏览器 + 等扫码 + 刷场次 + 导出
+python douyin_tool.py go --index 2     # 一条命令：检测登录 + 必要时扫码 + 刷场次 + 导出
 ```
 
-`go` 会自己处理：浏览器没起就启、没登录就轮询等扫码、登录后自动 refresh + export。
+`go` 会自己处理：没登录就弹窗等扫码，登录后自动 refresh + export。
 
 如果输出 `ROWS=35 TEXT_ROWS=33 EXCEL=E:\桌面\...xlsx`，说明你跑通了。
 
 分步命令（调试用）：
 ```powershell
-python douyin_tool.py browser status               # 看托管浏览器有没有跑
+python auth_browser.py status douyin-creator       # 看登录态
 python douyin_tool.py sessions list --cache-only   # 看场次缓存
 python douyin_tool.py export --index 2             # 直接导出（要求已登录 + 有缓存）
 ```
@@ -25,12 +25,13 @@ python douyin_tool.py export --index 2             # 直接导出（要求已登
 ## 不要做的事（之前的人踩过的坑）
 
 1. **不要把单 sheet Excel 改回多 sheet**。用户明确只要一张表。
-2. **不要把 `page.evaluate("() => { location.reload(); }")` 改回 `page.reload()`**。抖音对 Playwright CDP 协议的 `page.reload()` 有反爬识别，复盘页返回空壳（body 163 字符，复盘内容完全不渲染）。改回去话术就拿不到。位置：[export_review_table.py:454](export_review_table.py#L454)
+2. **不要把 `page.evaluate("() => { location.reload(); }")` 改回 `page.reload()`**。抖音对 Playwright `page.reload()` 有反爬识别，复盘页返回空壳（body 163 字符，复盘内容完全不渲染）。改回去话术就拿不到。位置：[export_review_table.py](export_review_table.py)
 3. **不要删 video checkpoint + React 虚拟列表慢滚逻辑**。这是长直播话术不漏尾部的关键。
-4. **不要默认用 Chrome / 不要启 chrome_daemon 去替代用户的浏览器**。用户明确要求工具优先 Edge（Windows 自带浏览器，目标用户是普通主播）。`chrome_daemon.find_browser()` 已经先读 HKCU UserChoice 拿系统默认浏览器。
-5. **不要 kill 用户的 msedge.exe / chrome.exe 进程**。项目托管浏览器用独立 `data/user_data/`，跟用户日常浏览器物理隔离。
-6. **不要主动 commit 代码**。用户没明确说要 commit。
-7. **用户没指定要导哪一场时不要自己挑**。`python douyin_tool.py go` 不带 `--index / --room-id / --title-contains / --start-contains` 时，跑到列出场次就停下，提示用户下一步用 `export --index N`。**不要为了"走通流程"就默认导第 1 场或者上次导过的那一场**——这是 [cmd_go() 当前实现](douyin_tool.py)，别改回"默认值"。
+4. **登录浏览器只用 Playwright 自带 Chromium + 持久 profile**。统一走 [auth_browser.py](auth_browser.py)：`launch_persistent_context(user_data_dir=".auth/<platform>")`、`headless=False`。不要回退到系统 Edge/Chrome + CDP 端口的老路径。
+5. **每个平台一个固定 user-data-dir**：`.auth/douyin-creator/` / `.auth/kuaishou/` ……不要混用 profile，不要去动用户日常浏览器的 profile，不要 kill 用户的 msedge.exe / chrome.exe 进程。
+6. **不要再引用 chrome_daemon / CDP_PORT / connect_over_cdp**。这个模块已经删了；新代码全部走 `auth_browser.launch_persistent`。
+7. **不要主动 commit 代码**。用户没明确说要 commit。
+8. **用户没指定要导哪一场时不要自己挑**。`python douyin_tool.py go` 不带 `--index / --room-id / --title-contains / --start-contains` 时，跑到列出场次就停下，提示用户下一步用 `export --index N`。**不要为了"走通流程"就默认导第 1 场或者上次导过的那一场**——这是 [cmd_go() 当前实现](douyin_tool.py)，别改回"默认值"。
 
 ## 项目文件导航
 
@@ -38,7 +39,7 @@ python douyin_tool.py export --index 2             # 直接导出（要求已登
 | 你想做的事 | 看哪个文件 |
 |---|---|
 | CLI 统一入口 | [douyin_tool.py](douyin_tool.py)（含 `go` 一键流程） |
-| 托管浏览器 + 登录检测 | [chrome_daemon.py](chrome_daemon.py) |
+| 专用登录浏览器（多平台） | [auth_browser.py](auth_browser.py) |
 | 近 30 场缓存 | [douyin_sessions.py](douyin_sessions.py) |
 | 单场抓取 + 染色 Excel | [export_review_table.py](export_review_table.py) |
 | 抖音接口适配器 | [sources/anchor.py](sources/anchor.py) |
@@ -63,9 +64,8 @@ python douyin_tool.py export --index 2             # 直接导出（要求已登
 ## 换设备能用的保障
 
 - `requirements.txt` 列了所有依赖，`pip install -r requirements.txt` 即可
-- **不需要** `playwright install`（项目复用本机 Edge / Chrome，不用 Playwright bundled chromium）
-- `chrome_daemon.find_browser()` 会自动找系统默认浏览器，不依赖固定路径
-- 登录态首次扫码后保存在 `data/user_data/`，永久有效
+- 必须跑一次 `playwright install chromium`（专用登录浏览器用的是 Playwright 自带 Chromium，跟系统 Edge/Chrome 物理隔离）
+- 登录态首次扫码后保存在 `.auth/<platform>/`，cookie 不过期就一直有效
 - 桌面路径用注册表读，不写死 `E:\桌面`
 
 ## 当前已验证

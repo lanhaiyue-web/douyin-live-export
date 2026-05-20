@@ -18,7 +18,8 @@ from playwright.async_api import async_playwright
 from .base import DataSource, LiveSession, MinuteData, TranscriptSegment
 
 DATA_DIR = Path(__file__).parent.parent / "data"
-USER_DATA_DIR = DATA_DIR / "user_data"
+AUTH_ROOT = Path(__file__).parent.parent / ".auth"
+USER_DATA_DIR = AUTH_ROOT / "douyin-creator"
 COOKIES_FILE = DATA_DIR / "cookies.json"
 
 REVIEW_URL = "https://anchor.douyin.com/anchor/review"
@@ -51,43 +52,37 @@ async def _inject_cookies(context) -> None:
 
 
 async def _launch_context(playwright, headless: bool):
-    """启动持久化登录 Chrome。"""
+    """启动持久化登录 Chromium（Playwright 自带内核，profile 在 .auth/douyin-creator）。"""
+    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
     context = await playwright.chromium.launch_persistent_context(
         user_data_dir=str(USER_DATA_DIR),
         headless=headless,
-        channel="chrome",
-        viewport={"width": 1440, "height": 900},
-        args=["--disable-blink-features=AutomationControlled"],
+        viewport=None,
+        no_viewport=True,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--lang=zh-CN",
+        ],
         ignore_default_args=["--enable-automation"],
+        locale="zh-CN",
     )
     await _inject_cookies(context)
     return context
 
 
 async def _open_context(playwright, headless: bool):
-    """优先复用 daemon Chrome；没有 daemon 时再启动持久化 Chrome。
+    """启动持久化 Chromium，返回 (context, owned_context=True)。
 
-    返回 (context, owned_context)。owned_context=True 时调用方负责关闭 context。
-    daemon 模式下只关闭新开的 page，不能关闭 context，否则会把常驻 Chrome 带掉。
+    新方案没有 daemon/CDP；每次调用都自己拥有 context，用完关掉即可。
     """
-    if not headless:
-        try:
-            from chrome_daemon import CDP_PORT, is_cdp_alive
-
-            if is_cdp_alive():
-                browser = await playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{CDP_PORT}")
-                if browser.contexts:
-                    context = browser.contexts[0]
-                    await _inject_cookies(context)
-                    return context, False
-        except Exception as e:
-            print(f"[warn] 复用 daemon Chrome 失败，改为新开 Chrome：{type(e).__name__}: {e}")
-
     return await _launch_context(playwright, headless=headless), True
 
 
 async def _cleanup_context(context, page, owned_context: bool) -> None:
-    """按 context 来源做清理。daemon 模式只关临时页，保留 Chrome。"""
+    """关闭自有 context。"""
     try:
         if owned_context:
             await context.close()

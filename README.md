@@ -13,7 +13,7 @@ claude plugin install douyin-live-export@douyin-live-export
 ```
 
 装好后输入 `/douyin-live-export` 触发，工具会自动：
-1. 启动你的默认浏览器
+1. 弹出一个专用登录浏览器（Playwright 自带 Chromium）
 2. 让你扫码登录抖音直播服务平台（仅首次）
 3. 列出你近 30 场直播
 4. 你告诉它要导哪一场 → Excel 自动出在桌面
@@ -26,7 +26,8 @@ claude plugin install douyin-live-export@douyin-live-export
 git clone https://github.com/lanhaiyue-web/douyin-live-export.git
 cd douyin-live-export
 pip install -r requirements.txt
-python douyin_tool.py go                  # 启动浏览器 → 扫码 → 列场次
+playwright install chromium               # 装一次就行
+python douyin_tool.py go                  # 弹专用浏览器 → 扫码 → 列场次
 python douyin_tool.py export --index N    # 导第 N 场
 ```
 
@@ -48,10 +49,10 @@ LLM 接手请先看 [AGENTS.md](AGENTS.md)。
 
 ## 工作原理
 
-- 自动启动你电脑的**默认浏览器**（Windows 上一般是 Edge），带远程调试端口
+- 弹出一个**专用登录浏览器**（Playwright 自带 Chromium，跟你日常 Edge 完全隔离）
 - 你在弹出的浏览器里**扫码登录抖音直播服务平台**（仅首次）
-- 登录态持久保存在 `data/user_data/`，下次直接用
-- 工具通过浏览器调试接口拦截 `anchor.douyin.com` 的后台 XHR 响应（不构造请求，所以抖音改签名也不影响）
+- 登录态持久保存在 `.auth/douyin-creator/`，下次直接复用，cookie 不过期就一直免登录
+- 工具通过 Playwright 拦截 `anchor.douyin.com` 的后台 XHR 响应（不构造请求，所以抖音改签名也不影响）
 - 拿到 `minute_trend` 流量曲线 + 复盘页 DOM 上的文字记录 → 按分钟对齐 → 染色 → 写 Excel
 
 ## 换设备的 onboarding（首次安装）
@@ -60,17 +61,16 @@ LLM 接手请先看 [AGENTS.md](AGENTS.md)。
 # 1. clone 项目，进入目录
 cd D:\AIProjects\my-first-peoject\抖音直播分析
 
-# 2. 建虚拟环境 + 装依赖
+# 2. 建虚拟环境 + 装依赖 + 装 Playwright Chromium
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+playwright install chromium
 
-# 3. 第一次启动托管浏览器（会自动选系统默认浏览器，通常是 Edge）
-python douyin_tool.py browser start
-# → 浏览器弹出 → 扫码登录抖音直播服务平台 → 登录态永久保存到 data/user_data/
+# 3. 第一次登录
+python auth_browser.py login douyin-creator
+# → 弹出可见 Chromium 窗口 → 扫码登录抖音直播服务平台 → 登录态写入 .auth/douyin-creator/
 ```
-
-不需要 `playwright install`——工具复用本机已有的 Edge / Chrome，不用 Playwright 自带的 chromium。
 
 ## 日常使用
 
@@ -87,16 +87,16 @@ python douyin_tool.py go --title-contains "聊一聊AI"
 python douyin_tool.py go --start-contains "2026-05-15 17:15"
 ```
 
-`go` 内部按 4 步走，每一步都会打 `[N/4]` 进度：
-1. 检查托管浏览器（没起就启）
-2. 检测登录态（没登录就轮询等你扫码，最多 10 分钟）
-3. 刷新近 30 场缓存，列出场次表
-4. 按你指定的 `--index / --room-id / --title-contains / --start-contains` 导出 Excel
+`go` 内部按 3 步走，每一步都会打 `[N/3]` 进度：
+1. 检测登录态（没登录就弹窗等你扫码，最多 10 分钟）
+2. 刷新近 30 场缓存，列出场次表
+3. 按你指定的 `--index / --room-id / --title-contains / --start-contains` 导出 Excel
 
 ### 分步命令（要手动控制时用）
 
 ```powershell
-python douyin_tool.py browser start                # 只启动浏览器
+python auth_browser.py login douyin-creator        # 仅首次：扫码登录
+python auth_browser.py status douyin-creator       # 检查登录态
 python douyin_tool.py sessions refresh --limit 30  # 只刷场次缓存
 python douyin_tool.py sessions list --cache-only   # 只看缓存
 python douyin_tool.py export --index 2             # 只导出
@@ -106,14 +106,14 @@ Excel 自动保存到桌面，文件名形如：`2026-05-15_聊一聊AI自媒体
 
 ## 换账号
 
-在托管浏览器里退出当前抖音账号 → 重新扫码登录 → 跑 `python douyin_tool.py sessions refresh`。不需要重装。
+跑 `python auth_browser.py login douyin-creator` → 在弹出的窗口里退出当前账号 → 重新扫码 → 跑 `python douyin_tool.py sessions refresh`。不需要重装。
 
 ## 项目结构
 
 ```
 抖音直播分析/
-├── douyin_tool.py          # 统一 CLI 入口（browser / sessions / export）
-├── chrome_daemon.py        # 托管浏览器（自动识别 Windows 默认浏览器，Edge 优先）
+├── auth_browser.py         # 专用登录浏览器（Playwright 持久 Chromium，多平台）
+├── douyin_tool.py          # 统一 CLI 入口（auth / sessions / export / go）
 ├── douyin_sessions.py      # 近 30 场缓存（写入 data/sessions_cache.json）
 ├── export_review_table.py  # 单场抓取：流量 + 话术 + 染色 Excel
 ├── excel_export.py         # Excel 导出（染色、桌面路径自动检测）
@@ -126,16 +126,17 @@ Excel 自动保存到桌面，文件名形如：`2026-05-15_聊一聊AI自媒体
 ├── requirements.txt
 ├── README.md / RUNBOOK.md
 ├── progress.md / tasks.md / memory.md / bugs.md   # 项目四件套
+├── .auth/                  # 各平台持久登录 profile（gitignored）
+│   ├── douyin-creator/     # 抖音直播服务平台
+│   └── kuaishou/           # 快手直播伙伴（占位）
 └── data/                   # 运行时数据（gitignored）
-    ├── user_data/          # 浏览器持久化登录 profile
     └── sessions_cache.json # 近 30 场缓存
 ```
 
 ## 关键技术点
 
-- **浏览器选择**：`chrome_daemon.find_browser()` 先读 Windows 注册表拿用户当前默认浏览器（`HKCU\Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice`），找不到再按 Edge / Chrome / Brave / 360 / QQ 顺序回退
-- **反反爬**：`page.reload()`（Playwright CDP 协议）会被抖音识别成自动化指纹，复盘页返回空壳。`export_review_table.py:454` 改用 `page.evaluate("location.reload()")` 在主环境触发 reload，复盘内容正常渲染
-- **登录态隔离**：`data/user_data/` 是项目独立的浏览器 profile，跟你日常用的 Edge 不互相干扰
+- **登录态**：Playwright `launch_persistent_context` + 自带 Chromium，每个平台一个固定 user-data-dir（`.auth/<platform>/`）。可见窗口扫码，下次复用 profile 自动登录
+- **反反爬**：`page.reload()` 会被抖音识别成自动化指纹，复盘页返回空壳。改用 `page.evaluate("location.reload()")` 在主环境触发 reload，复盘内容正常渲染
 - **接口签名**：不构造请求只拦响应，抖音改 `a_bogus` / `msToken` 等签名算法不影响
 
 ## 分发给别人怎么用（跨设备 / 跨账号）
@@ -147,8 +148,7 @@ Excel 自动保存到桌面，文件名形如：`2026-05-15_聊一聊AI自媒体
 1. **打包项目**（去掉登录态）：
    ```powershell
    cd D:\AIProjects\my-first-peoject\抖音直播分析
-   python douyin_tool.py browser stop
-   Remove-Item -Recurse -Force data\user_data, data\sessions_cache.json, data\chrome_daemon.pid -ErrorAction SilentlyContinue
+   Remove-Item -Recurse -Force .auth, data\sessions_cache.json -ErrorAction SilentlyContinue
    Compress-Archive -Path .\* -DestinationPath "$env:USERPROFILE\Desktop\douyin-live-export.zip" -Force
    ```
    生成的 zip 已不含你的抖音账号 cookies / 场次缓存，可以放心发给别人。
@@ -167,6 +167,7 @@ cd D:\douyin-live-export
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+playwright install chromium
 
 # 3. 在项目根开 Claude Code（cd 进项目目录后输入 claude），告诉 AI：
 #    /douyin-live-export
@@ -188,9 +189,9 @@ python douyin_tool.py export --index N
 
 或更直接（无需 skill，纯指令）：
 ```
-请进入目录 D:\douyin-live-export，先 pip install -r requirements.txt，
-然后跑 python douyin_tool.py go，列出场次后让我选一场，
-再跑 python douyin_tool.py export --index <我选的号> 导出。
+请进入目录 D:\douyin-live-export，先 pip install -r requirements.txt
+和 playwright install chromium，然后跑 python douyin_tool.py go，
+列出场次后让我选一场，再跑 python douyin_tool.py export --index <我选的号> 导出。
 ```
 
 ## Streamlit 看板（旁路，没在维护）
@@ -202,16 +203,17 @@ python douyin_tool.py export --index N
 ## 商业化 / 多账号
 
 - 自用：以上即可
-- 卖给主播：扩展 `sources/` 加多源（百应 / 抖店罗盘 / 直播伴侣），打包成 exe，独立站售卖
-- 多账号：每个账号一份独立 `data/user_data_<name>/`，启动时 `DOUYIN_USER_DATA_DIR` 环境变量切换（待加）
+- 卖给主播：扩展 `auth_browser.py` 的 `PLATFORMS` 字典加多源（百应 / 抖店罗盘 / 直播伴侣），打包成 exe，独立站售卖
+- 多账号：每个账号一份独立 `.auth/<account-name>/`，调 `launch_persistent("<account-name>")` 即可
 
 ## 故障排查
 
 | 症状 | 原因 | 解决 |
 |---|---|---|
-| 启动浏览器后 CDP 30 秒没就绪 | 端口 9222 被占 | 关掉占端口的进程，或改环境变量 `DOUYIN_CDP_PORT` |
-| 抖音页显示「系统繁忙」 | 抖音识别到自动化 | 换账号、等几小时；持久化 user_data 通常能避免 |
-| 拉不到场次 | 登录态过期 | 在托管浏览器里重新扫码 |
-| `当前页面没有读到开播时间` | 复盘页被反爬变空壳 | 已修：`export_review_table.py:454` 强制走 `location.reload()`，无需手动处理 |
+| `playwright._impl._api_types.Error: Executable doesn't exist` | 没装 Playwright Chromium 内核 | 跑 `playwright install chromium` |
+| 抖音页显示「系统繁忙」 | 抖音识别到自动化 | 换账号、等几小时；持久 profile 通常能避免 |
+| 拉不到场次 | 登录态过期 | `python auth_browser.py login douyin-creator` 重新扫码 |
+| `持久 profile 未登录` | `.auth/douyin-creator/` 里 cookie 没了 | 同上，重新登录 |
+| `当前页面没有读到开播时间` | 复盘页被反爬变空壳 | 已修：`export_review_table.py` 强制走 `location.reload()`，无需手动处理 |
 
 更多接手说明、决策历史、踩坑记录看 [RUNBOOK.md](RUNBOOK.md) / [progress.md](progress.md) / [bugs.md](bugs.md) / [memory.md](memory.md)。
